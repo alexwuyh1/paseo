@@ -263,16 +263,27 @@ export class FakePiSession implements PiRuntimeSession {
     this.compactRequests.push(customInstructions === undefined ? {} : { customInstructions });
     this.state.isCompacting = true;
     this.emit({ type: "compaction_start", reason: "manual" });
+    let failure: unknown;
     try {
       await this.heldCompaction?.promise;
       if (this.compactError) {
         throw this.compactError;
       }
+    } catch (error) {
+      failure = error;
+      throw error;
     } finally {
       this.state.isCompacting = false;
       this.heldCompaction = null;
       if (this.emitCompactEnd) {
-        this.emit({ type: "compaction_end", reason: "manual" });
+        const message = failure instanceof Error ? failure.message : undefined;
+        const aborted = message === "Compaction cancelled";
+        this.emit({
+          type: "compaction_end",
+          reason: "manual",
+          aborted,
+          errorMessage: aborted ? undefined : message,
+        });
       }
     }
   }

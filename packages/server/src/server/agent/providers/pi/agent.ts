@@ -31,6 +31,7 @@ import {
   type AgentSlashCommand,
   type AgentSlashCommandKind,
   type AgentStreamEvent,
+  type CompactionTimelineItem,
   type FetchCatalogOptions,
   type SteerActiveTurnOptions,
   type SteerResult,
@@ -814,6 +815,14 @@ function isPiRequestAbortError(error: unknown): boolean {
   return /\brequest was aborted\b|\babort(ed)?\b|\bcompaction cancel(l)?ed\b/i.test(
     toDiagnosticErrorMessage(error),
   );
+}
+
+function getPiCompactionOutcome(
+  event: Extract<PiAgentSessionEvent, { type: "compaction_end" }>,
+): NonNullable<CompactionTimelineItem["outcome"]> {
+  if (event.aborted) return "canceled";
+  if (event.errorMessage) return "failed";
+  return "success";
 }
 
 function modelToId(model: PiModel | null | undefined): string | null {
@@ -1796,8 +1805,12 @@ export class PiRpcAgentSession implements AgentSession {
     this.manualCompactionEmit = emit;
     this.manualCompactionStarted = false;
     this.manualCompactionCompleted = false;
+    let outcome: CompactionTimelineItem["outcome"] = "success";
     try {
       await this.runtimeSession.compact(customInstructions);
+    } catch (error) {
+      outcome = isPiRequestAbortError(error) ? "canceled" : "failed";
+      throw error;
     } finally {
       if (
         this.manualCompactionEmit === emit &&
@@ -1810,6 +1823,7 @@ export class PiRpcAgentSession implements AgentSession {
             type: "compaction",
             status: "completed",
             trigger: "manual",
+            outcome,
           },
         });
       }
@@ -2226,16 +2240,18 @@ export class PiRpcAgentSession implements AgentSession {
           },
         });
         return;
-      case "compaction_end":
+      case "compaction_end": {
         this.emitCompactionTimeline({
           turnId,
           item: {
             type: "compaction",
             status: "completed",
             trigger: event.reason === "manual" ? "manual" : "auto",
+            outcome: getPiCompactionOutcome(event),
           },
         });
         return;
+      }
       case "auto_retry_start":
         this.emit({
           type: "timeline",

@@ -3061,7 +3061,7 @@ describe("PiRpcAgentClient", () => {
     expect(events.timelineItems()).toEqual([
       { type: "user_message", text: "/compact focus on tests", clientMessageId: "compact-request" },
       { type: "compaction", status: "loading", trigger: "manual" },
-      { type: "compaction", status: "completed", trigger: "manual" },
+      { type: "compaction", status: "completed", trigger: "manual", outcome: "success" },
     ]);
     expect(events.turnLifecycleEvents()).toEqual([
       { type: "turn_started", turnId },
@@ -3088,7 +3088,7 @@ describe("PiRpcAgentClient", () => {
     expect(events.timelineItems()).toEqual([
       { type: "user_message", text: "/compact" },
       { type: "compaction", status: "loading", trigger: "manual" },
-      { type: "compaction", status: "completed", trigger: "manual" },
+      { type: "compaction", status: "completed", trigger: "manual", outcome: "failed" },
     ]);
 
     fakeSession.compactError = null;
@@ -3101,6 +3101,26 @@ describe("PiRpcAgentClient", () => {
       { type: "turn_failed", turnId },
       { type: "turn_started", turnId: retry.turnId },
       { type: "turn_completed", turnId: retry.turnId },
+    ]);
+    await session.close();
+  });
+
+  test("preserves native Pi cancellation and failure outcomes in compaction markers", async () => {
+    const { pi, session, events } = await createSession();
+    const runtime = pi.latestSession();
+    runtime.emit({ type: "compaction_start", reason: "manual" });
+    runtime.emit({ type: "compaction_end", reason: "manual", aborted: true });
+    runtime.emit({ type: "compaction_start", reason: "threshold" });
+    runtime.emit({
+      type: "compaction_end",
+      reason: "threshold",
+      errorMessage: "Summary unavailable",
+    });
+    expect(events.timelineItems()).toEqual([
+      { type: "compaction", status: "loading", trigger: "manual" },
+      { type: "compaction", status: "completed", trigger: "manual", outcome: "canceled" },
+      { type: "compaction", status: "loading", trigger: "auto" },
+      { type: "compaction", status: "completed", trigger: "auto", outcome: "failed" },
     ]);
     await session.close();
   });
